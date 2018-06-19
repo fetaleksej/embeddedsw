@@ -162,6 +162,13 @@
 #define PHY_DETECT_MASK 					0x1808
 #define PHY_MARVELL_IDENTIFIER				0x0141
 #define PHY_TI_IDENTIFIER					0x2000
+#define PHY_MIC_IDENTIFIER					0x0022
+
+#define MICREL_SPEED_STATUS_REG 			0x1F
+#define MICREL_SPEED_1000					0x0040
+#define MICREL_SPEED_100					0x0020
+#define MICREL_SPEED_10						0x0010
+
 #define PHY_XILINX_PCS_PMA_ID1			0x0174
 #define PHY_XILINX_PCS_PMA_ID2			0x0C00
 
@@ -344,8 +351,9 @@ void detect_phy(XEmacPs *xemacpsp)
 			XEmacPs_PhyRead(xemacpsp, phy_addr, PHY_IDENTIFIER_1_REG,
 							&phy_reg);
 			if ((phy_reg != PHY_MARVELL_IDENTIFIER) &&
-				(phy_reg != PHY_TI_IDENTIFIER)) {
-				xil_printf("WARNING: Not a Marvell or TI Ethernet PHY. Please verify the initialization sequence\r\n");
+				(phy_reg != PHY_TI_IDENTIFIER) && 
+				(phy_reg != PHY_MIC_IDENTIFIER)) {
+				xil_printf("WARNING: Not a Marvell or TI or Micrel Ethernet PHY. Please verify the initialization sequence\r\n");
 			}
 		}
 	}
@@ -643,6 +651,77 @@ static u32_t get_Marvell_phy_speed(XEmacPs *xemacpsp, u32_t phy_addr)
 	return XST_SUCCESS;
 }
 
+static u32_t get_Micrel_phy_speed(XEmacPs *xemacpsp, u32_t phy_addr)
+{
+	u16_t temp;
+	u16_t control;
+	u16_t status;
+	u16_t status_speed;
+	u32_t timeout_counter = 0;
+	u32_t temp_speed;
+	u32_t phyregtemp;
+
+	xil_printf("Start Micrel PHY autonegotiation  \r\n");
+	XEmacPs_PhyRead(xemacpsp, phy_addr, IEEE_AUTONEGO_ADVERTISE_REG, &control);  //reg 0x04
+	control |= IEEE_ASYMMETRIC_PAUSE_MASK;   //0x0800
+	control |= IEEE_PAUSE_MASK;
+	control |= ADVERTISE_100;
+	control |= ADVERTISE_10;
+	XEmacPs_PhyWrite(xemacpsp, phy_addr, IEEE_AUTONEGO_ADVERTISE_REG, control);
+	XEmacPs_PhyRead(xemacpsp, phy_addr, IEEE_1000_ADVERTISE_REG_OFFSET,	&control);
+	control |= ADVERTISE_1000;
+	XEmacPs_PhyWrite(xemacpsp, phy_addr, IEEE_1000_ADVERTISE_REG_OFFSET,control);
+	XEmacPs_PhyRead(xemacpsp, phy_addr, IEEE_COPPER_SPECIFIC_CONTROL_REG, &control);  //reg 0x0f
+	control |= (7 << 12);
+	control |= (1 << 11);
+	XEmacPs_PhyWrite(xemacpsp, phy_addr, IEEE_COPPER_SPECIFIC_CONTROL_REG,	control);
+	XEmacPs_PhyRead(xemacpsp, phy_addr, IEEE_CONTROL_REG_OFFSET, &control);        //reg 0x00
+	control |= IEEE_CTRL_AUTONEGOTIATE_ENABLE;
+	control |= IEEE_STAT_AUTONEGOTIATE_RESTART;
+	XEmacPs_PhyWrite(xemacpsp, phy_addr, IEEE_CONTROL_REG_OFFSET, control);
+	XEmacPs_PhyRead(xemacpsp, phy_addr, IEEE_CONTROL_REG_OFFSET, &control);
+	control |= IEEE_CTRL_RESET_MASK;
+	XEmacPs_PhyWrite(xemacpsp, phy_addr, IEEE_CONTROL_REG_OFFSET, control);
+	while (1) {
+		XEmacPs_PhyRead(xemacpsp, phy_addr, IEEE_CONTROL_REG_OFFSET, &control);
+		if (control & IEEE_CTRL_RESET_MASK)
+			continue;
+		else
+			break;
+	}
+
+	XEmacPs_PhyRead(xemacpsp, phy_addr, IEEE_STATUS_REG_OFFSET, &status);
+	xil_printf("Waiting for PHY to complete autonegotiation.\r\n");
+	while ( !(status & IEEE_STAT_AUTONEGOTIATE_COMPLETE) ) {
+		sleep(1);
+		XEmacPs_PhyRead(xemacpsp, phy_addr,
+						IEEE_COPPER_SPECIFIC_STATUS_REG_2,  &temp);
+		timeout_counter++;
+		if (timeout_counter == 30) {
+			xil_printf("Auto negotiation error \r\n");
+			return;
+		}
+		XEmacPs_PhyRead(xemacpsp, phy_addr, IEEE_STATUS_REG_OFFSET, &status);
+	}
+	xil_printf("autonegotiation complete \r\n");
+	//XEmacPs_PhyRead(xemacpsp, phy_addr,IEEE_SPECIFIC_STATUS_REG, &status_speed);
+	XEmacPs_PhyRead(xemacpsp, phy_addr,MICREL_SPEED_STATUS_REG, &status_speed);
+	if (status_speed & MICREL_SPEED_1000) {
+		xil_printf("micrel phy ksz9031 speed 1000 \r\n");
+		return 1000;
+	} else if (status_speed & MICREL_SPEED_100) {
+		xil_printf("micrel phy ksz9031 speed 100 \r\n");
+		return 100;
+	} else if (status_speed & MICREL_SPEED_10) {
+		xil_printf("micrel phy ksz9031 speed 10 \r\n");
+		return 10;
+	} else {
+		xil_printf("micrel phy ksz9031 speed 0 \r\n");
+		return 0;
+	}
+	return XST_SUCCESS;
+}
+
 static u32_t get_IEEE_phy_speed(XEmacPs *xemacpsp, u32_t phy_addr)
 {
 	u16_t phy_identity;
@@ -652,6 +731,8 @@ static u32_t get_IEEE_phy_speed(XEmacPs *xemacpsp, u32_t phy_addr)
 					&phy_identity);
 	if (phy_identity == PHY_TI_IDENTIFIER) {
 		RetStatus = get_TI_phy_speed(xemacpsp, phy_addr);
+	} else if(phy_identity == PHY_MIC_IDENTIFIER) {
+		RetStatus = get_Micrel_phy_speed(xemacpsp, phy_addr);
 	} else {
 		RetStatus = get_Marvell_phy_speed(xemacpsp, phy_addr);
 	}
