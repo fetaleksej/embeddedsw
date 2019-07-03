@@ -338,7 +338,7 @@ ulCriticalNestingConst: .word ulCriticalNesting
 ulPortTaskHasFPUContextConst: .word ulPortTaskHasFPUContext
 ulMaxAPIPriorityMaskConst: .word ulMaxAPIPriorityMask
 vTaskSwitchContextConst: .word vTaskSwitchContext
-FreeRTOS_ApplicationIRQHandlerConst: .word FreeRTOS_ApplicationIRQHandler
+FreeRTOS_ApplicationIRQHandlerConst: .word vApplicationIRQHandler
 ulPortInterruptNestingConst: .word ulPortInterruptNesting
 vApplicationFPUSafeIRQHandlerConst: .word vApplicationFPUSafeIRQHandler
 
